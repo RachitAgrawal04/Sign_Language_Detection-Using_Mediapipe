@@ -2,8 +2,7 @@
 
 <br>
 
-https://github.com/gurkirat20/Sign_Language_Detection/assets/91982831/1407cd03-7cb4-4bea-8a8b-6b3768f2b0e3
-
+https://github.com/RachitAgrawal04/Sign_Language_Detection-Using_Mediapipe
 <br>
 
 
@@ -103,7 +102,4 @@ However, the model uses the Mediapipe framework which is a lightweight framework
 
 <br>
 
-## Contributars
 
-- [Gurkirat Singh](https://github.com/gurkirat20)
-- [Astha Singh](https://github.com/AsthaSingh7295)
