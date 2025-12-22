@@ -12,11 +12,14 @@ import warnings
 warnings.filterwarnings('ignore', category=DeprecationWarning)
 
 from tensorflow.keras import optimizers  # type: ignore[import]
-from tensorflow.keras.models import Sequential  # type: ignore[import]
+from tensorflow.keras.models import Sequential, load_model  # type: ignore[import]
 from tensorflow.keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPooling2D  # type: ignore[import]
 from tensorflow.keras.utils import to_categorical  # type: ignore[import]
 from tensorflow.keras.callbacks import ModelCheckpoint  # type: ignore[import]
 from tensorflow.keras import backend as K  # type: ignore[import]
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 # Get the project root directory (parent of Code folder)
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -61,12 +64,15 @@ def cnn_model(num_of_classes: int):
 	model.add(Dropout(0.5))
 	model.add(Dense(128, activation='relu'))
 	model.add(Dropout(0.5))
+	# Final layer matches number of classes; softmax for multi-class
+	if num_of_classes < 2:
+		raise ValueError("Only one class detected in training/validation labels. Ensure splits include at least two classes.")
 	model.add(Dense(num_of_classes, activation='softmax'))
 	
 	# Use Adam optimizer instead of SGD for better convergence
 	adam = optimizers.Adam(learning_rate=0.001)
 	model.compile(loss='categorical_crossentropy', optimizer=adam, metrics=['accuracy'])
-	filepath = str(PROJECT_ROOT / "cnn_model_keras2.h5")
+	filepath = str(PROJECT_ROOT / "cnn_model_keras2.keras")
 	checkpoint1 = ModelCheckpoint(filepath, monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
 	callbacks_list = [checkpoint1]
 	return model, callbacks_list
@@ -80,12 +86,12 @@ def train():
 	with open(train_images_path, "rb") as f:
 		train_images = np.array(pickle.load(f))
 	with open(train_labels_path, "rb") as f:
-		train_labels = np.array(pickle.load(f), dtype=np.int32)
+		train_labels = np.array(pickle.load(f))
 
 	with open(val_images_path, "rb") as f:
 		val_images = np.array(pickle.load(f))
 	with open(val_labels_path, "rb") as f:
-		val_labels = np.array(pickle.load(f), dtype=np.int32)
+		val_labels = np.array(pickle.load(f))
 
 	all_labels = np.concatenate((train_labels, val_labels))
 	unique_labels = np.unique(all_labels)
@@ -93,6 +99,10 @@ def train():
 	train_labels = np.vectorize(label_to_index.get)(train_labels)
 	val_labels = np.vectorize(label_to_index.get)(val_labels)
 	num_classes = len(unique_labels)
+
+	# Persist the label mapping for consistent evaluation
+	with open(PROJECT_ROOT / "label_map.pkl", "wb") as lm:
+		pickle.dump(label_to_index, lm)
 
 	train_images = np.reshape(train_images, (train_images.shape[0], image_x, image_y, 1))
 	val_images = np.reshape(val_images, (val_images.shape[0], image_x, image_y, 1))
@@ -108,10 +118,53 @@ def train():
 
 	model, callbacks_list = cnn_model(num_classes)
 	model.summary()
-	model.fit(train_images, train_labels, validation_data=(val_images, val_labels), epochs=10, batch_size=64, callbacks=callbacks_list)
+	model.fit(train_images, train_labels, validation_data=(val_images, val_labels), epochs=5, batch_size=32, callbacks=callbacks_list)
 	scores = model.evaluate(val_images, val_labels, verbose=0)
 	print("CNN Error: %.2f%%" % (100-scores[1]*100))
 	print("CNN Accuracy: %.2f%%" % (scores[1]*100))
 
+	# Save the final model
+	model.save(PROJECT_ROOT / "cnn_model_keras2_final.keras")
+
+def evaluate_model():
+	# Use the same input size determined at load time
+	global image_x, image_y
+
+	# Load test data
+	with open(PROJECT_ROOT / "test_images", "rb") as f:
+		test_images = np.array(pickle.load(f))
+	with open(PROJECT_ROOT / "test_labels", "rb") as f:
+		test_labels = np.array(pickle.load(f))
+
+	# Load the label mapping saved during training
+	label_map_path = PROJECT_ROOT / "label_map.pkl"
+	if not label_map_path.exists():
+		raise FileNotFoundError("label_map.pkl not found. Train the model first to generate a consistent label map.")
+	with open(label_map_path, "rb") as lm:
+		label_to_index = pickle.load(lm)
+
+	# Filter out test samples with labels not present in training
+	known_mask = np.array([lbl in label_to_index for lbl in test_labels])
+	if not np.all(known_mask):
+		test_images = test_images[known_mask]
+		test_labels = test_labels[known_mask]
+	y_true = np.vectorize(label_to_index.get)(test_labels)
+
+	# Preprocess
+	X = test_images.reshape(-1, image_x, image_y, 1).astype('float32') / 255.0
+
+	# Load best model and predict
+	model = load_model(PROJECT_ROOT / "cnn_model_keras2.keras")
+	y_pred = np.argmax(model.predict(X), axis=1)
+
+	# Metrics
+	print(classification_report(y_true, y_pred, digits=4))
+	cm = confusion_matrix(y_true, y_pred)
+	sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+	plt.title("Confusion Matrix (Test)")
+	plt.xlabel("Predicted"); plt.ylabel("True")
+	plt.show()
+
 train()
+print("\n✓ Training complete. Run: evaluate.py")
 K.clear_session();
